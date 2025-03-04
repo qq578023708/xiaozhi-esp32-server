@@ -1,4 +1,4 @@
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import requests
 from config.logger import setup_logging
@@ -172,6 +172,29 @@ class MusicHandler:
         else:
             select_music=song_name
         try:
+            song_url= await self.get_music_url_adapter_2(select_music)
+            if song_url is None:
+                logger.bind(tag=TAG).error(f"获取网络音乐地址失败")
+                return
+            jump_response = requests.get(song_url, stream=True)
+            jump_response.raise_for_status()
+            song_file_name = "song.mp3"
+            save_path = os.path.join(self.music_cache_dir, song_file_name)
+            with open(save_path, "wb") as file:
+                for chunk in jump_response.iter_content(chunk_size=1024):
+                    file.write(chunk)
+                text = f"正在播放{select_music}"
+                await send_stt_message(conn, text)
+                conn.tts_first_text = select_music
+                conn.tts_last_text = select_music
+                conn.llm_finish_task = True
+                opus_packets, duration = conn.tts.wav_to_opus_data(save_path)
+                conn.audio_play_queue.put((opus_packets, song_file_name, 0))
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"获取网络音乐列表失败:{traceback.format_exc()}")
+
+    async def get_music_url_adapter_1(self,select_music):
+        try:
             payload = {
                 "input": select_music,
                 "filter": "name",
@@ -185,44 +208,58 @@ class MusicHandler:
             }
             response = requests.post(MusicApiUrl, data=encode_data, headers=headers)
             response.raise_for_status()
-            # logger.bind(tag=TAG).info(f"{response.json()}")
             response_data = response.json()
             if response_data["code"] != 200:
                 logger.bind(tag=TAG).error(
                     f"获取歌曲链接失败！{response_data['error']}"
                 )
+                return None
             for song in response_data["data"]:
-                song_type = song["type"]
-                song_link = song["link"]
-                song_id = song["songid"]
                 song_title = song["title"]
-                song_lrc = song["lrc"]
                 song_url = song["url"]
-                song_pic = song["pic"]
-                
-                logger.bind(tag=TAG).info(f"title:{song_title}, url:{song_url}")
                 # 获取跳转前链接
                 jump_response = requests.get(song_url, stream=True)
                 jump_response.raise_for_status()
                 if "audio/mpeg" in jump_response.headers["Content-Type"]:
                     # 获取到有效链接
-                    # 保存文件
-                    song_file_name = "song.mp3"
-                    save_path = os.path.join(self.music_cache_dir, song_file_name)
-                    with open(save_path, "wb") as file:
-                        for chunk in jump_response.iter_content(chunk_size=1024):
-                            file.write(chunk)
-                    print(f"文件已下载到:{save_path}")
-                    text = f"正在播放{song_title}"
-                    await send_stt_message(conn, text)
-                    conn.tts_first_text = song_title
-                    conn.tts_last_text = song_title
-                    conn.llm_finish_task = True
-                    if save_path.endswith(".p3"):
-                        opus_packets, duration = p3.decode_opus_from_file(save_path)
-                    else:
-                        opus_packets, duration = conn.tts.wav_to_opus_data(save_path)
-                    conn.audio_play_queue.put((opus_packets, song_file_name, 0))
-                    break
+                    return song_url
+            return None
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"获取网络音乐列表失败:{traceback.format_exc()}")
+
+    async def get_music_url_adapter_2(self,select_music):
+        getway="https://www.gequbao.com"
+        try:
+            url=f"{getway}/s/{quote(select_music)}"
+            headers = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "x-requested-with": "XMLHttpRequest",
+            }
+            response = requests.get(url,headers=headers)
+            response.raise_for_status()
+            response_data = response.text
+            #正则取出链接
+            pattern=r'href="(.*?)".*?播放&下载'
+            match=re.search(pattern,response_data)
+            if match:
+                ext=match.group(1)
+                response= requests.get(f"{getway}{ext}")
+                response.raise_for_status()
+                response_data=response.text
+                pattern=r"window.play_id = '(.*?)'"
+                match=re.search(pattern,response_data)
+                if match:
+                    song_id=match.group(1)
+                    payload={"id":song_id}
+                    headers={"content-type":"application/x-www-form-urlencoded; charset=UTF-8"}
+                    post_data=urlencode(payload)
+                    response= requests.post(f"{getway}/api/play-url",data=post_data,headers=headers)
+                    response.raise_for_status()
+                    response_data=response.json()
+                    if response_data['code'] != 1:
+                        return None
+                    return response_data['data']['url']
+            return None
+
         except Exception as e:
             logger.bind(tag=TAG).error(f"获取网络音乐列表失败:{traceback.format_exc()}")
