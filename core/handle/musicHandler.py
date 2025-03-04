@@ -222,7 +222,7 @@ class MusicHandler:
                         opus_packets, duration = p3.decode_opus_from_file(save_path)
                     else:
                         opus_packets, duration = conn.tts.wav_to_opus_data(save_path)
-                    conn.audio_play_queue.put((opus_packets, song_title))
+                    conn.audio_play_queue.put((opus_packets, song_file_name, 0))
                     break
         except Exception as e:
             logger.bind(tag=TAG).error(f"获取网络音乐列表失败:{traceback.format_exc()}")
