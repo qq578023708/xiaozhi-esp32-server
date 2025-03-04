@@ -132,7 +132,7 @@ class MusicHandler:
             payload = {
                 "input": select_music,
                 "filter": "name",
-                "type": "netease",
+                "type": "migu",
                 "page": "1",
             }
             encode_data = urlencode(payload)
